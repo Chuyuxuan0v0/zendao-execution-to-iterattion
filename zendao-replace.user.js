@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         禅道 - 替换"执行"为"迭代"（极致版）
 // @namespace    http://tampermonkey.net/
-// @version      1.2.0
+// @version      1.2.1
 // @description  在禅道中，将所有"执行"文本替换为"迭代"，使用 TreeWalker 只替换可见文本节点，不破坏 DOM
 // @author       Chuyuxuan0v0
 // @match        http://10.7.6.23/*
@@ -54,7 +54,7 @@
 
         if (replaced) {
             totalReplaceCount++;
-            console.log(`[替换脚本] 第 ${totalReplaceCount} 次替换（${SEARCH}→${REPLACE}）`);
+            console.log(`[替换脚本 v1.2.1] 第 ${totalReplaceCount} 次替换「${SEARCH}」→「${REPLACE}」`);
         }
     }
 
@@ -107,5 +107,5 @@
     // ---------- 暴露手动执行函数到控制台 ----------
     window.replaceExecute = fullReplace;
 
-    console.log(`[替换脚本] 已启动，将"${SEARCH}"替换为"${REPLACE}"（TreeWalker 模式，不破坏 DOM）`);
+    console.log(`[替换脚本 v1.2.1] ✅ 已启动，将「${SEARCH}」替换为「${REPLACE}」（TreeWalker 模式，不破坏 DOM 结构）`);
 })();
