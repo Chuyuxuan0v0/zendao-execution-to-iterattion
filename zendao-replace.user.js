@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         禅道 - 替换"执行"为"迭代"
+// @name         禅道 - 替换"执行"为"迭代"（极致版）
 // @namespace    http://tampermonkey.net/
-// @version      1.0.0
-// @description  在禅道（http://10.7.6.23/）中，将所有"执行"文本替换为"迭代"，支持动态内容
+// @version      1.2.0
+// @description  在禅道中，将所有"执行"文本替换为"迭代"，使用 TreeWalker 只替换可见文本节点，不破坏 DOM
 // @author       Chuyuxuan0v0
 // @match        http://10.7.6.23/*
 // @grant        none
@@ -16,64 +16,96 @@
 
     const SEARCH = '执行';
     const REPLACE = '迭代';
-    let replaceCount = 0;
+    const REGEX = new RegExp(SEARCH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
 
-    // ---------- 核心替换函数（使用 innerHTML 暴力替换） ----------
-    function doReplace() {
-        if (!document.body) return;
+    let totalReplaceCount = 0;
 
-        // 备份当前 body 的 innerHTML
-        let html = document.body.innerHTML;
-        // 全局替换所有"执行"为"迭代"（注意转义正则特殊字符，但中文无需）
-        const newHtml = html.replace(new RegExp(SEARCH, 'g'), REPLACE);
-        if (newHtml !== html) {
-            document.body.innerHTML = newHtml;
-            replaceCount++;
-            console.log(`[替换脚本] 已执行第 ${replaceCount} 次替换，将"${SEARCH}"替换为"${REPLACE}"`);
+    // ---------- 核心替换：TreeWalker 只替换可见文本节点 ----------
+    // 避免 innerHTML 暴力替换导致事件绑定丢失、输入框清空、页面崩溃
+    function replaceTextNodes(root) {
+        if (!root || !root.body) return;
+
+        const walker = document.createTreeWalker(
+            root.body,
+            NodeFilter.SHOW_TEXT,
+            function(node) {
+                // 跳过 script/style/textarea 内部的文本节点
+                const parent = node.parentNode;
+                if (parent) {
+                    const tag = parent.tagName;
+                    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEXTAREA') {
+                        return NodeFilter.FILTER_SKIP;
+                    }
+                }
+                // 只处理包含目标字符串的文本节点
+                return node.nodeValue.includes(SEARCH)
+                    ? NodeFilter.FILTER_ACCEPT
+                    : NodeFilter.FILTER_SKIP;
+            },
+            false
+        );
+
+        let node;
+        let replaced = false;
+        while ((node = walker.nextNode())) {
+            node.nodeValue = node.nodeValue.replace(REGEX, REPLACE);
+            replaced = true;
         }
+
+        if (replaced) {
+            totalReplaceCount++;
+            console.log(`[替换脚本] 第 ${totalReplaceCount} 次替换（${SEARCH}→${REPLACE}）`);
+        }
+    }
+
+    // ---------- 遍历同源 iframe ----------
+    function replaceIframes() {
+        document.querySelectorAll('iframe').forEach(iframe => {
+            try {
+                const doc = iframe.contentDocument || iframe.contentWindow?.document;
+                if (doc) replaceTextNodes(doc);
+            } catch (e) {
+                // 跨域 iframe 跳过，不做任何事
+            }
+        });
+    }
+
+    // ---------- 完整替换 ----------
+    function fullReplace() {
+        replaceTextNodes(document);
+        replaceIframes();
     }
 
     // ---------- 首次执行 ----------
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', doReplace);
-    } else {
-        doReplace();
-    }
+    fullReplace();
 
-    // ---------- 定时重试（每 500ms 执行一次，持续 10 秒） ----------
-    let timer = setInterval(() => {
-        doReplace();
-        if (replaceCount > 20) { // 大约 10 秒后停止
-            clearInterval(timer);
-            console.log('[替换脚本] 定时重试已停止');
-        }
-    }, 500);
-
-    // ---------- MutationObserver 监听新增内容 ----------
-    // 注意：因为使用 innerHTML 会触发 MutationObserver 自身，需防递归
-    let isObserving = false;
+    // ---------- MutationObserver 监听 DOM 变化（300ms 防抖） ----------
+    let observerTimer = null;
     const observer = new MutationObserver(() => {
-        if (isObserving) return;
-        isObserving = true;
-        // 延迟执行，避免循环
-        setTimeout(() => {
-            doReplace();
-            isObserving = false;
-        }, 50);
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    // ---------- 页面完全加载后额外执行几次 ----------
-    window.addEventListener('load', function() {
-        setTimeout(doReplace, 500);
-        setTimeout(doReplace, 1000);
-        setTimeout(doReplace, 2000);
-        // 清除定时器，因为已经加载完成
-        clearInterval(timer);
+        if (observerTimer) return;
+        observerTimer = setTimeout(() => {
+            fullReplace();
+            observerTimer = null;
+        }, 300);
     });
 
-    // ---------- 暴露手动执行函数到控制台，方便调试 ----------
-    window.replaceExecute = doReplace;
+    const waitForBody = setInterval(() => {
+        if (document.body) {
+            observer.observe(document.body, { childList: true, subtree: true });
+            clearInterval(waitForBody);
+        }
+    }, 100);
 
-    console.log(`[替换脚本] 已启动，将持续替换"${SEARCH}"为"${REPLACE}"`);
+    // ---------- 安全兜底：每 3 秒扫描一次 ----------
+    setInterval(fullReplace, 3000);
+
+    // ---------- 页面完全加载后补一次 ----------
+    window.addEventListener('load', () => {
+        setTimeout(fullReplace, 500);
+    });
+
+    // ---------- 暴露手动执行函数到控制台 ----------
+    window.replaceExecute = fullReplace;
+
+    console.log(`[替换脚本] 已启动，将"${SEARCH}"替换为"${REPLACE}"（TreeWalker 模式，不破坏 DOM）`);
 })();
